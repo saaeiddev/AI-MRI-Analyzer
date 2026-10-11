@@ -89,20 +89,27 @@ export async function createReferenceModel(holder){
   root.rotation.y=-.16;
   holder.add(root);
   let focus='whole',opacity=1;
+  const updateMaterials=()=>{
+    for(const mesh of meshes){
+      const cat=mesh.userData.referenceCategory;
+      // Deep structures cannot be explored through a fully opaque cortex.
+      const layerOpacity=focus==='deep'&&cat==='cortex'?Math.min(.14,opacity):opacity;
+      mesh.material.transparent=layerOpacity<.999;
+      mesh.material.opacity=layerOpacity;
+      mesh.material.depthWrite=layerOpacity>.85;
+    }
+  };
   const setFocus=(next='whole')=>{
     focus=next;
     for(const mesh of meshes){
       const cat=mesh.userData.referenceCategory;
       mesh.visible=next==='deep'?DEEP.has(cat):next==='cortex'?cat==='cortex':DEFAULT.has(cat);
     }
+    updateMaterials();
   };
   const setOpacity=(value)=>{
     opacity=value;
-    for(const mesh of meshes){
-      mesh.material.transparent=value<.999;
-      mesh.material.opacity=value;
-      mesh.material.depthWrite=value>.85;
-    }
+    updateMaterials();
   };
   const dispose=()=>{
     holder.remove(root);
