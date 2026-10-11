@@ -32,8 +32,8 @@
         <div class="mini-heading"><span>INPUT SOURCE</span><span class="thin-line"></span><span class="tiny-corner">01</span></div>
         <div id="dropzone" class="dropzone" tabindex="0" role="button" aria-label="Upload NIfTI or DICOM files"><div class="upload-icon"><svg viewBox="0 0 32 32" fill="none" aria-hidden="true"><path d="M16 22V4m0 0-7 7m7-7 7 7M5 22v6h22v-6" stroke="currentColor" stroke-width="2" stroke-linecap="square"/></svg></div><strong>DROP YOUR SCAN HERE</strong><span>.NII / .NII.GZ / .DCM</span><small>or tap to browse files · multiple DICOM slices supported</small></div>
         <input type="file" id="fileInput" multiple accept=".nii,.gz,.dcm,.dicom,application/dicom" hidden>
-        <div class="button-row"><button id="uploadBtn" class="angled-btn primary"><span>IMPORT SCAN</span><span>↗</span></button><button id="demoBtn" class="angled-btn alternate"><span>LOAD DEMO</span><span>◈</span></button></div>
-        <div class="dataset-card"><div class="dataset-indicator"></div><div class="dataset-info"><div class="dataset-label">ACTIVE DATASET</div><strong id="datasetName">SYNTHETIC PHANTOM</strong><span id="datasetMeta">DEMONSTRATION · NON-CLINICAL</span></div><span class="dataset-arrow">↗</span></div>
+        <div class="button-row"><button id="uploadBtn" class="angled-btn primary"><span>IMPORT SCAN</span><span>↗</span></button><button id="demoBtn" class="angled-btn alternate"><span>LOAD REAL MRI</span><span>◈</span></button></div>
+        <div class="dataset-card"><div class="dataset-indicator"></div><div class="dataset-info"><div class="dataset-label">ACTIVE DATASET</div><strong id="datasetName">MNI152 T1W REFERENCE</strong><span id="datasetMeta">FETCHING PUBLIC MRI TEMPLATE…</span></div><span class="dataset-arrow">↗</span></div>
         <div class="mini-heading"><span>RECONSTRUCTION</span><span class="thin-line"></span><span class="tiny-corner">02</span></div>
         <div class="control-group"><div class="control-head"><label for="threshold">ISO-SURFACE THRESHOLD</label><output id="thresholdValue">95</output></div><input id="threshold" type="range" min="15" max="240" value="95"><div class="range-legend"><span>SOFT TISSUE</span><span>DENSE SIGNAL</span></div></div>
         <div class="control-group"><div class="control-head"><label for="opacity">SURFACE OPACITY</label><output id="opacityValue">92%</output></div><input id="opacity" type="range" min="10" max="100" value="92"></div>
@@ -46,17 +46,30 @@
           <div class="stage-titles"><div class="orange-kicker"><span class="spark">✦</span> 3D RECONSTRUCTION ENGINE</div><h2>VOLUME <span>/</span> EXPLORER</h2><div class="subline"><span class="small-line"></span> INTERACTIVE ANATOMICAL SURFACE</div></div>
           <div class="view-buttons" role="group" aria-label="3D camera preset"><button class="view-btn selected" data-camera="perspective">3D</button><button class="view-btn" data-camera="front">FRONT</button><button class="view-btn" data-camera="side">SIDE</button><button class="view-btn" data-camera="top">TOP</button></div>
         </div>
+        <div class="specimen-switch">
+          <div class="switch-label"><span class="mode-diamond">◆</span> DISPLAY MODE</div>
+          <div class="display-group" role="group" aria-label="3D visualization type">
+            <button type="button" class="model-mode selected" data-mode="reference">ANATOMICAL MODEL</button>
+            <button type="button" class="model-mode" data-mode="planes">MRI 3D SLICES</button>
+            <button type="button" class="model-mode" data-mode="iso">ISO-SURFACE</button>
+          </div>
+          <div class="anatomy-filter-group" role="group" aria-label="Reference anatomy layer">
+            <button type="button" class="anatomy-filter selected" data-filter="whole">WHOLE</button>
+            <button type="button" class="anatomy-filter" data-filter="cortex">CORTEX</button>
+            <button type="button" class="anatomy-filter" data-filter="deep">DEEP</button>
+          </div>
+        </div>
         <div class="render-shell">
           <div id="scene" role="img" aria-label="Interactive 3D reconstruction of currently loaded medical volume"></div>
           <div class="corner-label top-left"><span class="corner-mark"></span> LIVE RECONSTRUCTION <span class="mono"> / WEBGL</span></div>
           <div class="corner-label top-right"><span class="status-dot"></span> <span id="renderStatus">READY</span></div>
           <div class="axis-widget"><div><b>X</b><span>↔</span></div><div><b>Y</b><span>↕</span></div><div><b>Z</b><span>⊙</span></div></div>
-          <div class="scene-label" id="sceneLabel"><span>FIG 01 — SYNTHETIC PHANTOM</span><strong>3D SIGNAL SURFACE</strong><small>Threshold rendering · not automatic tissue segmentation</small></div>
+          <div class="scene-label" id="sceneLabel"><span>LOADING OPEN ANATOMICAL REFERENCE</span><strong>ANATOMICAL REFERENCE</strong><small>Ready-made anatomical mesh · not reconstructed from MRI</small></div>
           <div class="scene-help">DRAG TO ROTATE <span>+</span> SCROLL TO ZOOM</div>
           <div class="scene-toolbar"><button id="resetCamera" title="Reset camera" aria-label="Reset camera">⟲</button><button id="meshColor" title="Change surface palette" aria-label="Change surface palette">◐</button><button id="fullScreen" title="Fullscreen 3D viewport" aria-label="Fullscreen 3D viewport">⛶</button></div>
           <div class="edge a"></div><div class="edge b"></div><div class="edge c"></div><div class="edge d"></div>
         </div>
-        <div class="stage-foot"><div class="live-metric"><span>VOLUME RESOLUTION</span><strong id="resolution">108 × 116 × 96</strong></div><div class="live-metric"><span>VOXEL SPACING</span><strong id="voxelSpacing">1.0 × 1.0 × 1.0 mm</strong></div><div class="live-metric"><span>RECONSTRUCTION</span><strong id="meshFaces">CALCULATING</strong></div><div class="live-metric"><span>DATA PROCESSING</span><strong>CLIENT SIDE</strong></div></div>
+        <div class="stage-foot"><div class="live-metric"><span>VOLUME RESOLUTION</span><strong id="resolution">108 × 116 × 96</strong></div><div class="live-metric"><span>VOXEL SPACING</span><strong id="voxelSpacing">1.0 × 1.0 × 1.0 mm</strong></div><div class="live-metric"><span>RECONSTRUCTION</span><strong id="meshFaces">LOADING ANATOMY</strong></div><div class="live-metric"><span>DATA PROCESSING</span><strong>CLIENT SIDE</strong></div></div>
       </section>
       <aside class="right-panel">
         <div class="panel-tag"><span>02 / MULTIPLANAR REVIEW</span><span class="panel-index">[ B ]</span></div>
@@ -67,10 +80,10 @@
         <div class="mini-heading"><span>IMAGE WINDOW</span><span class="thin-line"></span><span class="tiny-corner">03</span></div>
         <div class="control-group compact"><div class="control-head"><label for="windowRange">CONTRAST WIDTH</label><output id="windowValue">255</output></div><input id="windowRange" type="range" min="20" max="255" value="255"></div>
         <div class="control-group compact"><div class="control-head"><label for="levelRange">BRIGHTNESS CENTER</label><output id="levelValue">128</output></div><input id="levelRange" type="range" min="0" max="255" value="128"></div>
-        <div class="note-box"><div class="note-symbol">!</div><div><strong>RESEARCH USE ONLY</strong><p>No clinical diagnosis, pathology detection, AI inference or validated tumor segmentation is provided in this release.</p></div></div>
+        <div class="reference-credits"><div class="credit-eyebrow">REFERENCE ASSETS / SOURCES</div><p>3D anatomy: Z-Anatomy / BodyParts3D / DBCLS contributors via <a href="https://github.com/itayinbarr/brainproject" target="_blank" rel="noopener noreferrer">Brain Project ↗</a> · CC BY-SA 4.0.</p><p>MRI atlas: <a href="https://github.com/nilearn/nilearn" target="_blank" rel="noopener noreferrer">MNI152 via Nilearn ↗</a>. Reference 3D anatomy is not aligned to individual uploaded scans.</p></div><div class="note-box"><div class="note-symbol">!</div><div><strong>RESEARCH USE ONLY</strong><p>No clinical diagnosis, pathology detection, AI inference or validated tumor segmentation is provided in this release.</p></div></div>
       </aside>
     </main>
-    <footer class="footer"><span>© 2026 NEUROFORGE / AMIR SAEID DEHGHAN</span><span id="statusLine">SYNTHETIC PHANTOM READY · ALL PROCESSING ON YOUR DEVICE</span><span>BUILD 01.00 <span class="footer-light">◆</span></span></footer>
+    <footer class="footer"><span>© 2026 NEUROFORGE / AMIR SAEID DEHGHAN</span><span id="statusLine">FETCHING ANATOMICAL REFERENCE + MNI152 TEMPLATE</span><span>BUILD 01.00 <span class="footer-light">◆</span></span></footer>
   </div>
   <div id="toast" role="status" aria-live="polite"></div>
   <script type="module" src="./main.js"></script>
