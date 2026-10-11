@@ -1,7 +1,9 @@
 import * as THREE from 'three';
 import {OrbitControls} from 'three/addons/controls/OrbitControls.js';
 import {MarchingCubes} from 'three/addons/objects/MarchingCubes.js';
-import {createPhantom,loadVolume,voxelAt,clamp} from './volume.js';
+import {loadNifti,loadVolume,voxelAt,clamp} from './volume.js';
+import {createReferenceModel} from './reference-model.js';
+import {ScanPlanes} from './scan-planes.js';
 
 const $=id=>document.getElementById(id);
 const el={
@@ -14,7 +16,8 @@ const el={
 const canvas={axial:$('axialCanvas'),coronal:$('coronalCanvas'),sagittal:$('sagittalCanvas')};
 const sliders={axial:$('axialSlider'),coronal:$('coronalSlider'),sagittal:$('sagittalSlider')};
 const axisMap={axial:2,coronal:1,sagittal:0};
-let volume=createPhantom(),slice=[54,58,48],palette=0,surface=null;
+let volume=null,slice=[0,0,0],palette=0,surface=null;
+let activeMode='reference',reference=null,referenceLoading=true,scanPlanes=null;
 let toastTimer,rebuildTimer,busy=false;
 const palettes=[{name:'ION CYAN',color:0x39ead6,emissive:0x08443b},{name:'SOLAR CORAL',color:0xff8059,emissive:0x4b1809},{name:'VIOLET PULSE',color:0xae8aff,emissive:0x291455}];
 function notify(msg,error=false){
@@ -26,6 +29,7 @@ const scene=new THREE.Scene(),camera=new THREE.PerspectiveCamera(45,1,.05,100);
 camera.position.set(3.5,2.1,4.0);
 let renderer=null,controls=null;
 const holder=new THREE.Group();scene.add(holder);
+scanPlanes=new ScanPlanes(holder,canvas);
 try{
   renderer=new THREE.WebGLRenderer({antialias:true,alpha:true,preserveDrawingBuffer:true,powerPreference:'high-performance'});
   renderer.setPixelRatio(Math.min(window.devicePixelRatio||1,2));
@@ -80,12 +84,13 @@ if(renderer){
   requestAnimationFrame(tick);
 }
 function setupMetadata(){
+  if(!volume)return;
   const [x,y,z]=volume.dims;
   el.datasetName.textContent=volume.name.toUpperCase();
   el.datasetMeta.textContent=volume.synthetic?'SYNTHETIC / EDUCATIONAL SAMPLE':volume.kind+' · '+z+' IMAGES · LOCAL';
   el.resolution.textContent=x+' × '+y+' × '+z;
   el.voxelSpacing.textContent=volume.spacing.map(s=>s.toFixed(2)).join(' × ')+' mm';
-  el.sceneLabel.querySelector('span').textContent=volume.synthetic?'FIG 01 — SYNTHETIC PHANTOM':'FIG 01 — USER-SUPPLIED VOLUME';
+  el.sceneLabel.querySelector('span').textContent=volume.kind==='MNI152'?'REFERENCE MRI — MNI152 ATLAS':'USER-SUPPLIED IMAGING DATA';
   for(const [name,axis] of Object.entries(axisMap)){
     const slider=sliders[name];
     slider.max=volume.dims[axis]-1;slider.value=slice[axis];
@@ -101,6 +106,7 @@ function sampleTrilinear(x,y,z){
   return voxelAt(volume,ix,iy,iz);
 }
 function rebuildMesh(){
+  if(!volume||activeMode!=='iso')return;
   if(!renderer){el.meshFaces.textContent='WEBGL REQUIRED';return;}
   el.renderStatus.textContent='PROCESSING';
   const resolution=[0,37,53,69][Number(el.detail.value)];
@@ -138,6 +144,7 @@ function rebuildMesh(){
   }
 }
 function scheduleMesh(){
+  if(activeMode!=='iso'||!volume)return;
   clearTimeout(rebuildTimer);rebuildTimer=setTimeout(rebuildMesh,180);
 }
 function mapIntensity(v){
@@ -145,6 +152,7 @@ function mapIntensity(v){
   return clamp(Math.round((v-(level-width/2))/width*255),0,255);
 }
 function renderSlice(name){
+  if(!volume)return;
   const c=canvas[name],axis=axisMap[name],dims=volume.dims;
   const a=name==='sagittal'?dims[1]:dims[0];
   const b=name==='axial'?dims[1]:dims[2];
@@ -172,8 +180,13 @@ function renderSlice(name){
   $(name+'Index').textContent=['X','Y','Z'][axis]+' '+String(slice[axis]).padStart(3,'0');
   sliders[name].value=slice[axis];
 }
-function renderAllSlices(){for(const name of Object.keys(canvas))renderSlice(name);}
+function renderAllSlices(){
+  if(!volume)return;
+  for(const name of Object.keys(canvas))renderSlice(name);
+  scanPlanes?.update(volume,slice);
+}
 function jumpFromClick(name,event){
+  if(!volume)return;
   const c=canvas[name],rect=c.getBoundingClientRect(),a=c.width,b=c.height;
   const fit=Math.min(rect.width/a,rect.height/b),drawW=a*fit,drawH=b*fit;
   const u=clamp(Math.round((event.clientX-rect.left-(rect.width-drawW)/2)/fit),0,a-1);
@@ -190,9 +203,10 @@ for(const [name,c] of Object.entries(canvas)){
 for(const [input,output,suffix] of [['threshold','thresholdValue',''],['opacity','opacityValue','%'],['detail','detailValue','']]){
   $(input).addEventListener('input',()=>{
     $(output).textContent=input==='detail'?['','LOW','MEDIUM','HIGH'][Number($(input).value)]:$(input).value+suffix;
-    if(input==='opacity'&&surface){
-      surface.material.opacity=Number(el.opacity.value)/100;
-      surface.material.depthWrite=Number(el.opacity.value)>80;
+    if(input==='opacity'){
+      if(surface){surface.material.opacity=Number(el.opacity.value)/100;surface.material.depthWrite=Number(el.opacity.value)>80;}
+      reference?.setOpacity(Number(el.opacity.value)/100);
+      scanPlanes?.setOpacity(Number(el.opacity.value)/100);
     }else scheduleMesh();
   });
 }
@@ -205,7 +219,12 @@ function cameraPreset(name){
 }
 document.querySelectorAll('.view-btn').forEach(b=>b.addEventListener('click',()=>cameraPreset(b.dataset.camera)));
 $('resetCamera').addEventListener('click',()=>cameraPreset('perspective'));
-$('meshColor').addEventListener('click',()=>{palette=(palette+1)%palettes.length;if(surface){surface.material.color.setHex(palettes[palette].color);surface.material.emissive.setHex(palettes[palette].emissive);}notify('Surface palette: '+palettes[palette].name);});
+$('meshColor').addEventListener('click',()=>{
+  if(activeMode==='reference')return notify('Anatomical reference uses a natural tissue palette.');
+  palette=(palette+1)%palettes.length;
+  if(surface){surface.material.color.setHex(palettes[palette].color);surface.material.emissive.setHex(palettes[palette].emissive);}
+  notify('Scan surface palette: '+palettes[palette].name);
+});
 $('fullScreen').addEventListener('click',async()=>{
   const target=document.querySelector('.render-shell');
   try{if(document.fullscreenElement)await document.exitFullscreen();else if(target.requestFullscreen)await target.requestFullscreen();else notify('Fullscreen is not supported by this browser.',true);}
@@ -219,14 +238,95 @@ $('exportBtn').addEventListener('click',()=>{
     notify('3D viewport screenshot exported.');
   }catch(err){notify('Could not export image: '+err.message,true);}
 });
-async function setVolume(next){
+function setMode(mode){
+  if(!['reference','planes','iso'].includes(mode))return;
+  if(mode!=='reference'&&!volume){notify('Load the MRI atlas or your own scan first.',true);return;}
+  if(mode==='reference'&&!reference){notify('Anatomical model is still loading.',true);return;}
+  activeMode=mode;
+  document.querySelectorAll('.model-mode').forEach(button=>button.classList.toggle('selected',button.dataset.mode===mode));
+  if(reference)reference.root.visible=mode==='reference';
+  if(scanPlanes)scanPlanes.setVisible(mode==='planes');
+  if(surface)surface.visible=mode==='iso';
+  el.threshold.disabled=mode!=='iso';
+  el.detail.disabled=mode!=='iso';
+  const lbl=el.sceneLabel;
+  if(mode==='reference'){
+    lbl.querySelector('span').textContent='Z-ANATOMY / BODYPARTS3D / CC BY-SA 4.0';
+    lbl.querySelector('strong').textContent='ANATOMICAL REFERENCE';
+    lbl.querySelector('small').textContent='Licensed illustration · NOT reconstructed from the MRI';
+    el.meshFaces.textContent=reference?reference.structures.toLocaleString()+' STRUCTURES':'LOADING';
+  }else if(mode==='planes'){
+    lbl.querySelector('span').textContent='TRUE VOXEL DATA / THREE ORTHOGONAL PLANES';
+    lbl.querySelector('strong').textContent='3D MRI CROSS-SECTIONS';
+    lbl.querySelector('small').textContent='Directly sampled from the loaded scan · no AI segmentation';
+    el.meshFaces.textContent='3 SLICE PLANES';
+  }else{
+    lbl.querySelector('span').textContent='EXPERIMENTAL INTENSITY-THRESHOLD SURFACE';
+    lbl.querySelector('strong').textContent='MRI ISO-SURFACE';
+    lbl.querySelector('small').textContent='Unsegmented intensity boundary · NOT verified anatomy';
+    rebuildMesh();
+  }
+  el.renderStatus.textContent='READY';
+}
+document.querySelectorAll('.model-mode').forEach(button=>button.addEventListener('click',()=>setMode(button.dataset.mode)));
+document.querySelectorAll('.anatomy-filter').forEach(button=>button.addEventListener('click',()=>{
+  if(!reference)return notify('Anatomical specimen has not loaded.',true);
+  reference.setFocus(button.dataset.filter);
+  document.querySelectorAll('.anatomy-filter').forEach(other=>other.classList.toggle('selected',other===button));
+  if(activeMode!=='reference')setMode('reference');
+}));
+async function loadReference(){
+  try{
+    el.renderStatus.textContent='LOADING ANATOMY';
+    reference=await createReferenceModel(holder);
+    reference.setOpacity(Number(el.opacity.value)/100);
+    if(activeMode==='reference')setMode('reference');else reference.root.visible=false;
+    notify('Detailed anatomical reference model loaded.');
+  }catch(error){
+    console.error('Anatomical model could not be loaded:',error);
+    notify('Could not fetch the detailed anatomical reference model. Check network/CDN access.',true);
+    if(volume)setMode('planes');
+  }finally{referenceLoading=false;el.renderStatus.textContent='READY';}
+}
+async function setVolume(next,{switchTo=null}={}){
   volume=next;resetSlices();setupMetadata();renderAllSlices();
-  // Returning to the default threshold also gives new datasets a predictable first view.
-  el.threshold.value=95;el.thresholdValue.textContent='95';
-  await new Promise(requestAnimationFrame);
-  rebuildMesh();
-  status(volume.synthetic?'SYNTHETIC PHANTOM READY · NO PATIENT DATA':'YOUR VOLUME IS READY · ALL PROCESSING ON YOUR DEVICE');
+  if(switchTo)setMode(switchTo);
+  else if(activeMode==='iso')rebuildMesh();
+  status(volume.kind==='MNI152'?'MNI152 TEMPLATE LOADED · EDUCATIONAL REFERENCE':'LOCAL MRI READY · USER FILE NOT UPLOADED TO A SERVER');
   if(next.warnings?.length)notify(next.warnings.length+' DICOM file(s) were skipped. Check format compatibility.',true);
+}
+async function loadDemoDataset(){
+  if(busy)return;
+  busy=true;el.renderStatus.textContent='LOADING MRI';
+  status('FETCHING MNI152 MRI TEMPLATE FOR REAL SLICE VIEWS…');
+  const sources=[
+    'https://raw.githubusercontent.com/nilearn/nilearn/main/nilearn/datasets/data/mni_icbm152_t1_tal_nlin_sym_09a_converted.nii.gz',
+    'https://cdn.jsdelivr.net/gh/nilearn/nilearn@main/nilearn/datasets/data/mni_icbm152_t1_tal_nlin_sym_09a_converted.nii.gz'
+  ];
+  try{
+    let vol=null;
+    for(const source of sources){
+      try{
+        const result=await fetch(source,{mode:'cors'});
+        if(!result.ok)throw new Error('HTTP '+result.status);
+        const blob=await result.blob();
+        if(blob.size<1024)throw new Error('Empty MRI template download');
+        const file=new File([blob],'MNI152_T1w_reference.nii.gz',{type:'application/gzip'});
+        vol=await loadNifti(file);
+        break;
+      }catch(error){console.warn('[Neuroforge] MRI demo source unavailable:',source,error);}
+    }
+    if(!vol)throw new Error('All MRI template endpoints unavailable.');
+    vol.name='MNI152 — T1-WEIGHTED MRI';
+    vol.kind='MNI152';
+    vol.synthetic=false;
+    await setVolume(vol);
+    notify('MNI152 MRI template loaded: real anatomical reference slices.');
+  }catch(error){
+    console.error(error);
+    status('MNI152 DEMO UNAVAILABLE · UPLOAD YOUR OWN MRI');
+    notify('MRI template could not load. Your own NIfTI or DICOM scans still work.',true);
+  }finally{busy=false;el.renderStatus.textContent='READY';}
 }
 async function handleFiles(files){
   if(busy)return;
@@ -234,7 +334,7 @@ async function handleFiles(files){
   notify('Reading and assembling your imaging data in this browser…');
   try{
     const next=await loadVolume(files);
-    await setVolume(next);
+    await setVolume(next,{switchTo:'planes'});
     notify('Volume loaded: '+next.dims.join(' × ')+' voxels.');
   }catch(err){console.error('Imaging read failed:',err);status('ERROR · '+err.message);notify(err.message,true);}
   finally{busy=false;}
@@ -246,11 +346,14 @@ el.fileInput.addEventListener('change',event=>{handleFiles(event.target.files);e
 for(const type of ['dragenter','dragover'])el.dropzone.addEventListener(type,event=>{event.preventDefault();el.dropzone.classList.add('dragover');});
 for(const type of ['dragleave','drop'])el.dropzone.addEventListener(type,event=>{event.preventDefault();el.dropzone.classList.remove('dragover');});
 el.dropzone.addEventListener('drop',event=>handleFiles(event.dataTransfer.files));
-$('demoBtn').addEventListener('click',()=>{setVolume(createPhantom()).then(()=>notify('Synthetic phantom loaded. Not a real patient scan.'));});
+$('demoBtn').addEventListener('click',()=>loadDemoDataset());
 document.addEventListener('keydown',event=>{
   if(event.target instanceof HTMLInputElement)return;
-  if(event.key==='ArrowUp'||event.key==='ArrowDown'){
+  if(volume&&(event.key==='ArrowUp'||event.key==='ArrowDown')){
     slice[2]=clamp(slice[2]+(event.key==='ArrowUp'?1:-1),0,volume.dims[2]-1);renderAllSlices();
   }
 });
-resetSlices();setupMetadata();renderAllSlices();setTimeout(rebuildMesh,70);
+// Immediately show real anatomical mesh; fetch a true MRI template in parallel.
+// A failed external fetch never silently substitutes a cabbage-shaped phantom.
+loadReference();
+loadDemoDataset();
